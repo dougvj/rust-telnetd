@@ -397,7 +397,11 @@ impl IACParser {
                             self.subnegotiation = true;
                             self.state = IACParseStateEnum::FindIAC;
                         } else {
-                            stream.write(&out_buffer[..0])?;
+                            // Flush the data bytes gathered before this
+                            // command. This used to write `[..0]`, dropping
+                            // any keystrokes that shared a read with a
+                            // DO/DONT/WILL/WONT.
+                            stream.write(&out_buffer[..o])?;
                             o = 0;
                             fn_handle_iac(self.emit_iac().as_ref());
                             self.reset();
@@ -535,7 +539,11 @@ impl TelnetSession {
                                 out_buffer[o] = buffer[i];
                                 o += 1;
                             }
-                            stream.write(&out_buffer[0..o]).unwrap();
+                            // Client went away mid-session: end this
+                            // thread quietly instead of panicking.
+                            if stream.write(&out_buffer[0..o]).is_err() {
+                                break;
+                            }
                         }
                         Err(e) => {
                             println!("Error: {}", e);
@@ -677,7 +685,8 @@ impl TelnetSession {
                 libc::close(master.as_raw_fd());
                 libc::close(slave.as_raw_fd());
             }
-            stream.shutdown(std::net::Shutdown::Both).unwrap();
+            // An already-closed peer gives ENOTCONN here; nothing to do.
+            let _ = stream.shutdown(std::net::Shutdown::Both);
             reader.join().unwrap();
             writer.join().unwrap();
         });
